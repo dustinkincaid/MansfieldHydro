@@ -1,0 +1,38 @@
+Metadata for: GHCN_DailyMet_MorrisvilleAirport_2021-01-04.csv
+
+README FILE FOR DAILY GLOBAL HISTORICAL CLIMATOLOGY NETWORK (GHCN-DAILY) 
+Version 3.26
+
+These Global Historical Climatology Network (GHCN) data were downloaded on 2021-01-04 by Dustin Kincaid
+From: https://www.ncdc.noaa.gov/cdo-web/search?datasetid=GHCND
+
+To acknowledge the specific version of the dataset used, please cite:
+Menne, M.J., I. Durre, B. Korzeniewski, S. McNeal, K. Thomas, X. Yin, S. Anthony, R. Ray, 
+R.S. Vose, B.E.Gleason, and T.G. Houston, 2012: Global Historical Climatology Network - 
+Daily (GHCN-Daily), Version 3. [indicate subset used following decimal, 
+e.g. Version 3.12]. 
+NOAA National Climatic Data Center. http://doi.org/10.7289/V5D21VHZ [access date].
+
+Stations	MORRISVILLE STOWE STATE AIRPORT, VT US (GHCND:USW00054771)
+Custom Flag(s)	Station Name
+Units	Metric
+Data Types	WSF2 - Fastest 2-minute wind speed
+FMTM - Time of fastest mile or fastest 1-minute wind (HHMM)
+WSF5 - Fastest 5-second wind speed (m/s)
+SNOW - Snowfall (mm)
+WT03 - Thunder
+PRCP - Precipitation (tenths of mm)
+WT06 - Glaze or rime
+WT08 - Smoke or haze
+SNWD - Snow depth (mm)
+WT09 - Blowing or drifting snow
+WDF2 - Direction of fastest 2-minute wind (degrees)
+AWND - Average wind speed (m/s)
+WDF5 - Direction of fastest 5-second wind (degrees)
+PGTM - Peak gust time (HHMM)
+WT01 - Fog, ice fog, or freezing fog (may include heavy fog)
+TMAX - Maximum temperature (degrees C)
+WT02 - Heavy fog or heaving freezing fog (not always distinguished from fog)
+TAVG - Average Temperature (degrees C)
+TMIN - Minimum temperature (degrees C)
+TSUN - Total sunshine for the period (minutes)
