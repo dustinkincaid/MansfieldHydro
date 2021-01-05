@@ -123,4 +123,17 @@ withdraw <-
 # Still need to join the WITHDRAW df
 alldat <- full_join(runoff, snow) %>% 
   full_join(met) %>% 
-  full_join(met_vwc_daily)
+  full_join(met_vwc_daily) %>% 
+  mutate(year = year(date),
+        month = month(date)) %>% 
+  full_join(withdraw) %>% 
+  # Divide monthly use volumes by number of days each month
+  # mutate(mday = mday(date)) %>% 
+  group_by(year, month) %>% 
+  mutate(use_snow_mm_daily = use_snowmaking_mm/max(mday(date)),
+         use_total_mm_daily = use_total_mm/max(mday(date))) %>% 
+  ungroup() %>% 
+  select(-c(year, month, use_snowmaking_mm, use_diverted_mm, use_golf_mm, use_total_mm))
+
+# Write to CSV
+write_csv(alldat, "data/alldata_compiled.csv")
