@@ -113,10 +113,13 @@ lm.temp <- lm(temp_avg_vwc ~ temp_avg, data = compareTemp %>% filter(month(date)
 summary(lm.temp)
 
 # Total SMR withdrawals
+# Let's also assume an NA means 0 here, so replace NAs with 0
 withdraw <- 
   withdraw %>% 
   rowwise() %>% 
   mutate(use_total_mm = sum(use_snowmaking_mm, use_diverted_mm, use_golf_mm, na.rm = T)) %>% 
+  mutate_at(vars(starts_with("use")),
+            list(~ replace_na(., 0))) %>% 
   select(wyear, month, year, everything())
 
 # JOIN DFs INTO ONE DF
