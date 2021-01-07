@@ -1,7 +1,7 @@
 ---
 title: <font size = "5"> Self-organizing map analysis of spring runoff from Mt Mansfield </font>
 author: "Dustin Kincaid"
-date: "1/6/2021<br><br"
+date: "1/6/2021<br><br>"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -59,8 +59,9 @@ clustering; thus, keep just one of the variables to serve as a proxy for that fa
   # We want to avoid incorporating too much of the climate pattern, which would wash out this spring signal
   # We'll want to play with the size of this window
   # For reference water year days-of-year: Mar 15 = 166; Apr 1 = 183; May 1 = 213; May 15 = 227; May 31 = 243
-  mets_sub <- mets %>% 
-    filter(doy_wyear >= 160 & doy_wyear <= 250)
+  mets_sub <- mets %>%
+    # filter(doy_wyear >= 160 & doy_wyear <= 250)
+    filter(doy_wyear >= 180 & doy_wyear <= 245)
 
 # For the analysis we only need one watershed/site of data, because the drivers we use are the same for both sites
   mets_sub_1site <- mets_sub %>% 
@@ -85,7 +86,7 @@ clustering; thus, keep just one of the variables to serve as a proxy for that fa
     # Keep only complete observations/rows (no NAs in any of the columns)
     na.omit() %>% 
     # Visualize these
-    lares::corr_cross(max_pvalue = 0.05, top = 30)
+    lares::corr_cross(max_pvalue = 0.05, top = 20)
 ```
 <br><br>
 
@@ -151,7 +152,7 @@ sedRegPallette=c("cyan", "yellow", "orange", "red", "green3", "orchid","gray", "
 
 # Read in table of parameters (grid rows, cols, grid type, learning rate etc)
 ### IMPORTANT: cannot have number nodes greater than num observations
-params <- read_csv(here("Data", "somParams", "params_SOM.csv"))
+params <- read_csv(here("Data", "somParams", "params_SOM_days180to245.csv"))
 params <- as.matrix(params[1:nrow(params),])
 
 # Vector of observation number from original dataset
@@ -515,7 +516,7 @@ write_csv(clustAssignmDF, here(paste0(newFolder,"/", Sys.Date(), "/", "ClustAssi
 
 ##### Choose the best SOM run based on non-parametric F-stat and quantization error
 We want to maximize npF (ratio of b/w cluster variance) and minimize QE (mean distance b/w each data vector & best-matching unit)  
-Here are the top  runs based on npF
+Here are the top 50% of runs based on npF
 ```{r choose best lattice config, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.width = 8, out.width = "80%"}
 # CHOOSE BEST LATTICE CONFIGURATION ----
   # Examine the non-parametric F-stat (npF) and quantization error (QE) to choose the best lattice configuration
@@ -530,7 +531,7 @@ Here are the top  runs based on npF
     # Sort by npF (max to min)
     arrange(desc(npF)) %>% 
     # Only show top 50% of choices
-    # slice(1:(nrow(.)/2)) %>%
+    slice(1:(nrow(.)/2)) %>%
     # Create lattice config ID (rows x cols)
     mutate(latID = paste(paste(rows, "x", cols, sep = ""), "_", Clusters, "cl", "_", Run, sep = "")) %>% 
     # Plot
@@ -557,7 +558,7 @@ Here are the top  runs based on npF
 ```
 <br><br>
 
-##### Choose the best run from each high performing cluster #
+##### Choose the best run from each high performing (top 50%) cluster #
 ```{r choose best run, include = TRUE, echo = FALSE, message = FALSE}
 # Trying to automate the selection process
 best_summ_top <- 
@@ -566,7 +567,7 @@ best_summ_top <-
   # Sort by npF (max to min)
   arrange(desc(npF)) %>% 
   # Only show top 50% of choices
-  # slice(1:(nrow(.)/2)) %>%
+  slice(1:(nrow(.)/2)) %>%
   # Arrange by QE (min to max)
   arrange(Clusters, QE) %>% 
   # Select the top (lowest QE) for each cluster #
@@ -582,71 +583,105 @@ best_summ_top %>%
             .funs = ~round(., 3)) %>% 
   gt()
 
-# Select the top one
-best_summ_top1 <-
+# Select each of the top cluster #s
+best_summ_top_3cl <-
   best_summ_top %>% 
-  slice(1:1)
+  filter(Clusters == 3)
 
-noquote("The script chose:")
-best_summ_top1 %>% 
-  mutate_at(vars(c(npF, QE)),
-            .funs = ~round(., 3)) %>%   
-  gt()
+best_summ_top_4cl <-
+  best_summ_top %>% 
+  filter(Clusters == 4)
+
+best_summ_top_5cl <-
+  best_summ_top %>% 
+  filter(Clusters == 5)
+
+# best_summ_top1 <-
+#   best_summ_top %>%
+#   slice(1:1)
+
+# noquote("The script chose:")
+# best_summ_top1 %>% 
+#   mutate_at(vars(c(npF, QE)),
+#             .funs = ~round(., 3)) %>%   
+#   gt()
 
 # Choose lattice dimensions you want to examine based on npf/QE plot above
-  n_rows = best_summ_top1$rows
-  n_cols = best_summ_top1$cols
-  n_clust = best_summ_top1$Clusters
+  # n_rows = best_summ_top1$rows
+  # n_cols = best_summ_top1$cols
+  # n_clust = best_summ_top1$Clusters
+  
+# Set up dataframes for each of the cluster options
+  best_run_3cl = best_summ_top_3cl$Run
+  best_run_4cl = best_summ_top_4cl$Run
+  best_run_5cl = best_summ_top_5cl$Run
   
 # Which Run is best?
-  best_run = best_summ_top1$Run
+  # best_run = best_summ_top1$Run
 
 # CREATE DF WITH EVENT IDs & CLUSTER #'s ----  
-datWithCluster <- clustAssignmDF %>% 
-  # Parse columns into correct type
-  type_convert() %>% 
-  filter(Run == best_run) %>% 
-  # Pivot to longer format
-  pivot_longer(cols = obs1:ncol(.), names_to = "obs", values_to = "cluster") %>% 
-  select(cluster) %>% 
-  # Bind cluster ID to myData
-  bind_cols(myData) %>% 
-  # Join to original data to get event IDs
-  left_join(mets_sub) %>% 
-  # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
-  # but KEEP the INFO vars
-  # select(-one_of(drop.vars)) %>% 
-  # Arrange columns
-  select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+  # 3 clusters
+  datWithCluster_3cl <- clustAssignmDF %>% 
+    # Parse columns into correct type
+    type_convert() %>% 
+    filter(Run == best_run_3cl) %>% 
+    # Pivot to longer format
+    pivot_longer(cols = obs1:ncol(.), names_to = "obs", values_to = "cluster") %>% 
+    select(cluster) %>% 
+    # Bind cluster ID to myData
+    bind_cols(myData) %>% 
+    # Join to original data to get event IDs
+    left_join(mets_sub) %>% 
+    # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
+    # but KEEP the INFO vars
+    # select(-one_of(drop.vars)) %>% 
+    # Arrange columns
+    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+  
+  # 4 clusters
+  datWithCluster_4cl <- clustAssignmDF %>% 
+    # Parse columns into correct type
+    type_convert() %>% 
+    filter(Run == best_run_4cl) %>% 
+    # Pivot to longer format
+    pivot_longer(cols = obs1:ncol(.), names_to = "obs", values_to = "cluster") %>% 
+    select(cluster) %>% 
+    # Bind cluster ID to myData
+    bind_cols(myData) %>% 
+    # Join to original data to get event IDs
+    left_join(mets_sub) %>% 
+    # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
+    # but KEEP the INFO vars
+    # select(-one_of(drop.vars)) %>% 
+    # Arrange columns
+    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+  
+  # 5 clusters
+  datWithCluster_5cl <- clustAssignmDF %>% 
+    # Parse columns into correct type
+    type_convert() %>% 
+    filter(Run == best_run_5cl) %>% 
+    # Pivot to longer format
+    pivot_longer(cols = obs1:ncol(.), names_to = "obs", values_to = "cluster") %>% 
+    select(cluster) %>% 
+    # Bind cluster ID to myData
+    bind_cols(myData) %>% 
+    # Join to original data to get event IDs
+    left_join(mets_sub) %>% 
+    # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
+    # but KEEP the INFO vars
+    # select(-one_of(drop.vars)) %>% 
+    # Arrange columns
+    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())  
   
   # Write to CSV
-  datWithCluster %>% 
-    write_csv(here(paste0(newFolder, "/", "SOMresults", "_", myDataSet, "_", Sys.Date(), "_", nclusters, "cl", "_", n_rows, "x", n_cols, ".csv")))
+  # datWithCluster %>% 
+  #   write_csv(here(paste0(newFolder, "/", "SOMresults", "_", myDataSet, "_", Sys.Date(), "_", nclusters, "cl", "_", n_rows, "x", n_cols, ".csv")))
 ```
 <br><br>
 
 > To examine this run in greater detail (e.g., component planes), see the 'X_SOMplots_site_ ... .pdf'  
 
-<br><br>
-
-##### Examine boxplots of independent variables by cluster
-```{r boxplots, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
-# BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
-  datWithCluster %>%
-    # Remove the drop.info vars from above
-    select(-one_of(drop.info)) %>% 
-    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
-    ggplot(aes(x = cluster, y = value, group = cluster)) +
-    facet_wrap(~var, scales = "free_y", ncol = 4) +
-    geom_boxplot(fill = "white") +
-    geom_point(position=position_jitter(width=0.2), shape=1, size=1, color="gray50", alpha=0.6) +
-    ylab("Value") + xlab("Cluster") +
-    theme_bw() +
-    theme(panel.grid = element_blank(),
-          strip.text = element_text(size = 7),
-          panel.spacing.x = unit(0.3, "inches"),
-          panel.spacing.y = unit(0.45, "inches"))
-```
 <br><br>
 
 ```{r plot themes and labels, include = FALSE}
@@ -663,14 +698,31 @@ datWithCluster <- clustAssignmDF %>%
                   axis.title.y = element_text(margin=margin(0,5,0,0)),
                   legend.title = element_text(size = 9),
                   legend.text = element_text(size = 9))
-  
-
 ```
 
+##### 3 clusters - examine boxplots of independent variables by cluster
+```{r boxplots 3cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
+# BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
+  datWithCluster_3cl %>%
+    # Remove the drop.info vars from above
+    select(-one_of(drop.info)) %>% 
+    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    ggplot(aes(x = cluster, y = value, group = cluster)) +
+    facet_wrap(~var, scales = "free_y", ncol = 4) +
+    geom_boxplot(fill = "white") +
+    geom_point(position=position_jitter(width=0.2), shape=1, size=1, color="gray50", alpha=0.6) +
+    ylab("Value") + xlab("Cluster") +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          strip.text = element_text(size = 7),
+          panel.spacing.x = unit(0.3, "inches"),
+          panel.spacing.y = unit(0.45, "inches"))
+```
+<br><br>
 
 ```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1}
 # Look at z-scores by cluster
-datWithCluster %>%     
+datWithCluster_3cl %>%     
   # Remove the drop.info vars from above
   select(-one_of(drop.info)) %>% 
   # Rename clusters
@@ -702,9 +754,9 @@ datWithCluster %>%
 ```
 <br><br>
 
-#### Examine how the clusters map on to the cumulative runoff curves
-```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "80%"}
-datWithCluster %>% 
+#### 3 clusters - examine how the clusters map on to the cumulative runoff curves
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
+datWithCluster_3cl %>% 
   mutate(cluster = factor(cluster)) %>% 
   ggplot(aes(x = date)) +
   facet_wrap(~wyear, ncol = 4, scales = "free_x") +
@@ -712,61 +764,38 @@ datWithCluster %>%
                 ymin = -Inf, ymax = Inf,
             color = cluster, fill = cluster)) +  
   geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
-  theme1
+  ylab("Runoff (mm)") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  theme1 +
+  theme(axis.title.x = element_blank())
 ```
 <br><br>
 
-#### How do our results differ if we choose the 2nd best SOM run?
-```{r, include = TRUE, echo = FALSE, message = FALSE}
-# Select the top one
-best_summ_2ndBest <-
-  best_summ_top %>% 
-  slice(2:2)
-
-noquote("The 2nd best run was:")
-best_summ_2ndBest %>% 
-  mutate_at(vars(c(npF, QE)),
-            .funs = ~round(., 3)) %>%     
-  gt()
-
-# Choose lattice dimensions you want to examine based on npf/QE plot above
-  n_rows_2 = best_summ_2ndBest$rows
-  n_cols_2 = best_summ_2ndBest$cols
-  n_clust_2 = best_summ_2ndBest$Clusters
-
-# Which Run is best?
-  best_run_2 = best_summ_2ndBest$Run
-
-# CREATE DF WITH EVENT IDs & CLUSTER #'s ----  
-datWithCluster2 <- clustAssignmDF %>% 
-  # Parse columns into correct type
-  type_convert() %>% 
-  filter(Run == best_run_2) %>% 
-  # Pivot to longer format
-  pivot_longer(cols = obs1:ncol(.), names_to = "obs", values_to = "cluster") %>% 
-  select(cluster) %>% 
-  # Bind cluster ID to myData
-  bind_cols(myData) %>% 
-  # Join to original data to get event IDs
-  left_join(mets_sub) %>% 
-  # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
-  # but KEEP the INFO vars
-  # select(-one_of(drop.vars)) %>% 
-  # Arrange columns
-  select(site:ncol(.), everything())
-  
-  # Write to CSV
-  # datWithCluster %>% 
-  #   mutate(event_start = as.character(event_start)) %>% 
-  #   write_csv(here(paste0(newFolder, "/", "SOMresults", "_", myDataSet, "_", Sys.Date(), "_", nclusters, "cl", "_", n_rows, "x", n_cols, ".csv")))
+##### 4 clusters - examine boxplots of independent variables by cluster
+```{r boxplots 4cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
+# BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
+  datWithCluster_4cl %>%
+    # Remove the drop.info vars from above
+    select(-one_of(drop.info)) %>% 
+    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    ggplot(aes(x = cluster, y = value, group = cluster)) +
+    facet_wrap(~var, scales = "free_y", ncol = 4) +
+    geom_boxplot(fill = "white") +
+    geom_point(position=position_jitter(width=0.2), shape=1, size=1, color="gray50", alpha=0.6) +
+    ylab("Value") + xlab("Cluster") +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          strip.text = element_text(size = 7),
+          panel.spacing.x = unit(0.3, "inches"),
+          panel.spacing.y = unit(0.45, "inches"))
 ```
 <br><br>
 
-To examine this run in greater detail (e.g., component planes), see the 'X_SOMplots_site_ ... .pdf'  
-<br><br>
 ```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1}
 # Look at z-scores by cluster
-datWithCluster2 %>%     
+datWithCluster_4cl %>%     
   # Remove the drop.info vars from above
   select(-one_of(drop.info)) %>% 
   # Rename clusters
@@ -798,9 +827,9 @@ datWithCluster2 %>%
 ```
 <br><br>
 
-#### Examine how the clusters map on to the cumulative runoff curves
-```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "80%"}
-datWithCluster2 %>% 
+#### 4 clusters - examine how the clusters map on to the cumulative runoff curves
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
+datWithCluster_4cl %>% 
   mutate(cluster = factor(cluster)) %>% 
   ggplot(aes(x = date)) +
   facet_wrap(~wyear, ncol = 4, scales = "free_x") +
@@ -808,5 +837,84 @@ datWithCluster2 %>%
                 ymin = -Inf, ymax = Inf,
             color = cluster, fill = cluster)) +  
   geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
-  theme1
+  ylab("Runoff (mm)") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +  
+  theme1 +
+  theme(axis.title.x = element_blank())
 ```
+<br><br>
+
+##### 5 clusters - examine boxplots of independent variables by cluster
+```{r boxplots 5cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
+# BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
+  datWithCluster_5cl %>%
+    # Remove the drop.info vars from above
+    select(-one_of(drop.info)) %>% 
+    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    ggplot(aes(x = cluster, y = value, group = cluster)) +
+    facet_wrap(~var, scales = "free_y", ncol = 4) +
+    geom_boxplot(fill = "white") +
+    geom_point(position=position_jitter(width=0.2), shape=1, size=1, color="gray50", alpha=0.6) +
+    ylab("Value") + xlab("Cluster") +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          strip.text = element_text(size = 7),
+          panel.spacing.x = unit(0.3, "inches"),
+          panel.spacing.y = unit(0.45, "inches"))
+```
+<br><br>
+
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1}
+# Look at z-scores by cluster
+datWithCluster_5cl %>%     
+  # Remove the drop.info vars from above
+  select(-one_of(drop.info)) %>% 
+  # Rename clusters
+  mutate(cluster = paste("Cluster", cluster, sep = " ")) %>% 
+  # Calculate z-scores for each independent variable
+  mutate_at(vars(c(snow_dep_m:ncol(.))),
+          .funs = list(~ (. - mean(., na.rm = T)) / sd(., na.rm = T))) %>%
+  pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+  group_by(cluster, var) %>% 
+  summarize(median = median(value, na.rm = T),
+            q2 = quantile(value, 1/4, na.rm = T),
+            q3 = quantile(value, 3/4, na.rm = T)) %>%   
+  # Order the vars n var
+  # mutate(var = factor(var, levels = c("rain_int_mmPERmin_mean", "rain_int_mmPERmin_max", "rain_event_hrs", "rain_event_total_mm",
+  #                                     "q_4d", "time_sinceLastEvent", "API_4d", "VWC_pre_wet_15cm", "VWC_pre_dry_30cm", "VWC_pre_dry_15cm", "SoilTemp_pre_wet_15cm",
+  #                                     "solarRad_4d", "PET_mmHR", "diff_airT_soilT", "DOY"))) %>%
+  ggplot(aes(x = var, y = median)) +
+    # Must use scales = "free" when using the reordering functions
+    facet_wrap(~cluster, ncol = 2) +
+    geom_bar(stat = "identity") +
+    geom_errorbar(aes(ymin = q2, ymax = q3), width = 0.2, position = position_dodge(0.9)) +
+    # scale_x_reordered() +
+    ylab("Median z-scores") +
+    coord_flip() +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.title.y = element_blank()) +
+  ggtitle("Characteristics of each cluster - median z-scores")
+```
+<br><br>
+
+#### 5 clusters - examine how the clusters map on to the cumulative runoff curves
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
+datWithCluster_5cl %>% 
+  mutate(cluster = factor(cluster)) %>% 
+  ggplot(aes(x = date)) +
+  facet_wrap(~wyear, ncol = 4, scales = "free_x") +
+  geom_rect(aes(xmin = date, xmax = date,
+                ymin = -Inf, ymax = Inf,
+            color = cluster, fill = cluster)) +  
+  geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
+  ylab("Runoff (mm)") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +  
+  theme1 +
+  theme(axis.title.x = element_blank())
+```
+<br><br>
