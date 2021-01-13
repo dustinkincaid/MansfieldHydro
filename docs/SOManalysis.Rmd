@@ -1,7 +1,7 @@
 ---
 title: <font size = "5"> Self-organizing map analysis of spring runoff from Mt Mansfield </font>
 author: "Dustin Kincaid"
-date: "1/6/2021<br><br>"
+date: "1/12/2021<br><br>"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -35,6 +35,7 @@ knitr::opts_chunk$set(fig.width = 6, fig.asp = 0.618, out.width = "70%", fig.ali
   library("grid")     
   library("gridExtra")
   library("factoextra")  # for PCA plots
+  library("zoo")         # for rolling functions
 
   # Load the range normalization function written by Kristin Underwood
   source(here("scripts", "L2norm.R"))
@@ -51,46 +52,117 @@ knitr::opts_chunk$set(fig.width = 6, fig.asp = 0.618, out.width = "70%", fig.ali
   mets <- read_csv(here("data", "alldata_compiled.csv"))
 ```
 
-#### Select variables to keep
-If two variables are strongly correlated (negatively or positively) they can effectively "double-weight" a particular factor important in driving
-clustering; thus, keep just one of the variables to serve as a proxy for that factor
-```{r select vars, include = TRUE, echo = FALSE, warning = FALSE, message = FALSE, fig.width = 8, out.width = "80%"}
+#### Shorten window of analysis to focus on spring melt period
+```{r analysis window, include = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
 # First we're going to filter the data to focus on March-May dynamics
   # We want to avoid incorporating too much of the climate pattern, which would wash out this spring signal
   # We'll want to play with the size of this window
   # For reference water year days-of-year: Mar 15 = 166; Apr 1 = 183; May 1 = 213; May 15 = 227; May 31 = 243
   mets_sub <- mets %>%
     # filter(doy_wyear >= 160 & doy_wyear <= 250)
-    filter(doy_wyear >= 180 & doy_wyear <= 245)
+    filter(doy_wyear >= 170 & doy_wyear <= 245)
+```
+<br><br>
 
+We eventually want to look at differences between cumulative runoff yields at the end of the water year so let's see if cumulative runoff yields at the end of the analysis window correlate with those at the end of the water year
+<br><br>
+```{r spr vs fall corr, include = TRUE, echo = FALSE, warning = FALSE, message = FALSE}
+# We eventually want to look at differences between cumulative runoff yields at the end of the water yield
+# so let's see if cumulative runoff yields at the end of the analysis window correlate with those at the end of the water year
+  yields_spr <- 
+    mets_sub %>% 
+    group_by(site, wyear) %>% 
+    do(tail(., 1)) %>% 
+    select(site, wyear, q_mm_cum) %>% 
+    pivot_wider(names_from = site, values_from = q_mm_cum) %>% 
+    mutate(WBminusRB_abs_spr = WB - RB,
+           WBminusRB_per_spr = (WB - RB)/RB) %>% 
+    select(-c(WB, RB))
+
+  yields_end <- 
+    mets %>% 
+    group_by(site, wyear) %>% 
+    do(tail(., 1)) %>% 
+    filter(!is.na(site)) %>% 
+    select(site, wyear, q_mm_cum) %>% 
+    pivot_wider(names_from = site, values_from = q_mm_cum) %>% 
+    mutate(WBminusRB_abs_end = WB - RB,
+           WBminusRB_per_end = (WB - RB)/RB) %>% 
+    select(-c(WB, RB))
+  
+  yields_comp <- 
+    full_join(yields_spr, yields_end)
+  
+  yields_comp %>% 
+    ggplot(aes(x = WBminusRB_abs_spr, y = WBminusRB_abs_end)) +
+    geom_smooth(method = "lm") +
+    geom_point() +
+    geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+    xlab("Absolute diff. in spring") +
+    ylab("Absolute diff. in fall") +
+    theme_classic() +
+    ggtitle("Comparing absolute yield differences in spring vs. \n end of water year for each watershed")
+  
+  r_abs <- round(cor.test(yields_comp$WBminusRB_abs_spr, yields_comp$WBminusRB_abs_end)$estimate, 2)
+  p_abs <- round(cor.test(yields_comp$WBminusRB_abs_spr, yields_comp$WBminusRB_abs_end)$p.value, 3)
+  noquote(paste0("r = ", r_abs))
+  noquote(paste0("p = ", p_abs))
+  
+  yields_comp %>% 
+    ggplot(aes(x = WBminusRB_per_spr, y = WBminusRB_per_end)) +
+    geom_smooth(method = "lm") +
+    geom_point() +
+    geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+    xlab("Percent diff. in spring") +
+    ylab("Percent diff. in fall") +
+    theme_classic() +
+    ggtitle("Comparing percent yield differences in spring vs. \n end of water year for each watershed")
+  
+  r_per <- round(cor.test(yields_comp$WBminusRB_per_spr, yields_comp$WBminusRB_per_end)$estimate, 2)
+  p_per <- round(cor.test(yields_comp$WBminusRB_per_spr, yields_comp$WBminusRB_per_end)$p.value, 3)
+  noquote(paste0("r = ", r_per))
+  noquote(paste0("p = ", p_per))
+```
+<br><br>
+
+#### Select variables to keep
+If two variables are strongly correlated (negatively or positively) they can effectively "double-weight" a particular factor important in driving
+clustering; thus, keep just one of the variables to serve as a proxy for that factor
+```{r select vars, include = TRUE, echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, out.width = "80%"}
 # For the analysis we only need one watershed/site of data, because the drivers we use are the same for both sites
   mets_sub_1site <- mets_sub %>% 
     filter(site == "WB")
 
 # Select vars to keep Step 1
-  # List the variables that will not be used in the analysis (e.g., response/dependent & ID/INFO)
+  # List the ID and response variables that will NOT be used in the analysis
   drop.info <- names(mets_sub_1site %>% 
                        select(# Remove the non-numerical ID/INFO
                               site, wyear, date, doy_wyear,
                               # Remove response variables
-                              q_mm, q_mm_cum,
-                              # Remove other variables we know we won't want
-                              temp_max, temp_min, wind_spd_avg,
+                              q_mm, q_mm_cum, q_mm_per,
+                              # Remove other variables we know we won't want for SOM, but will want for graphing results later
+                              precip_mm_cum, precip_mm_per))
+  
+  # List the other variables that will not be used in this analysis
+  drop.vars <- names(mets_sub_1site %>% 
+                       select(temp_max, temp_min,
                               # We'll keep the average temps measured at VWC/FEMC station, so drop those from Morrisville/Stowe airport
-                              temp_avg))
+                              temp_avg,
+                              # Let's just use the cumulative total volume of water diverted from the stream by the resort
+                              use_snow_mm_daily, use_total_mm_daily,
+                              # After looking at an analysis, I'm going to drop the use categories altogether,
+                              use_total_mm_cum))  
 
 # Look at correlations between variables
   mets_sub_1site %>% 
     # Remove the vars listed above
-    select(-one_of(drop.info)) %>% 
+    select(-one_of(drop.info, drop.vars)) %>% 
     # Keep only complete observations/rows (no NAs in any of the columns)
     na.omit() %>% 
     # Visualize these
     lares::corr_cross(max_pvalue = 0.05, top = 20)
 ```
-<br><br>
-
-Looks like we won't need to remove any variables based on correlations
+Not too worried about correlations
 <br><br>
 
 #### Self-organizing map (SOM)
@@ -101,7 +173,7 @@ To determine the the shape of the grid (ratio of columns to rows), we use the ra
 ```{r SOM setup, include = TRUE, echo = FALSE}
 myData <- mets_sub_1site %>% 
   # Remove the vars listed above
-  select(-one_of(drop.info)) %>% 
+  select(-one_of(drop.info, drop.vars)) %>% 
   # Keep only complete observations/rows (no NAs in any of the columns)
   na.omit()
 
@@ -152,7 +224,7 @@ sedRegPallette=c("cyan", "yellow", "orange", "red", "green3", "orchid","gray", "
 
 # Read in table of parameters (grid rows, cols, grid type, learning rate etc)
 ### IMPORTANT: cannot have number nodes greater than num observations
-params <- read_csv(here("Data", "somParams", "params_SOM_days180to245.csv"))
+params <- read_csv(here("Data", "somParams", "params_SOM_days170to245.csv"))
 params <- as.matrix(params[1:nrow(params),])
 
 # Vector of observation number from original dataset
@@ -571,14 +643,25 @@ best_summ_top <-
   # Arrange by QE (min to max)
   arrange(Clusters, QE) %>% 
   # Select the top (lowest QE) for each cluster #
-  group_by(Clusters) %>% 
-  slice(1:1) %>% 
+  group_by(Clusters) %>%
+  slice(1:1) %>%
+  # Sort by npF (max to min)
+  arrange(desc(npF)) %>% 
+  ungroup()
+
+# Manual selection of SOM runs if above doesn't choose well
+best_summ_top_man <- 
+  ResultsDF %>% 
+  select(Run, rows, cols, Nodes, Clusters, npF, QE) %>% 
+  # Choose run numbers here
+  filter(Run %in% c(9, 17, 22)) %>% 
   # Sort by npF (max to min)
   arrange(desc(npF)) %>% 
   ungroup()
 
 noquote("These were the top runs for each high-performing cluster #:")
-best_summ_top %>% 
+# best_summ_top %>% 
+best_summ_top_man %>%   
   mutate_at(vars(c(npF, QE)),
             .funs = ~round(., 3)) %>% 
   gt()
@@ -634,9 +717,10 @@ best_summ_top_5cl <-
     left_join(mets_sub) %>% 
     # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
     # but KEEP the INFO vars
-    # select(-one_of(drop.vars)) %>% 
+    select(-one_of(drop.vars)) %>%
+    mutate(SOMversion = "3cl") %>% 
     # Arrange columns
-    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+    select(SOMversion, site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
   
   # 4 clusters
   datWithCluster_4cl <- clustAssignmDF %>% 
@@ -652,9 +736,10 @@ best_summ_top_5cl <-
     left_join(mets_sub) %>% 
     # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
     # but KEEP the INFO vars
-    # select(-one_of(drop.vars)) %>% 
+    select(-one_of(drop.vars)) %>%
+    mutate(SOMversion = "4cl") %>% 
     # Arrange columns
-    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+    select(SOMversion, site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
   
   # 5 clusters
   datWithCluster_5cl <- clustAssignmDF %>% 
@@ -670,9 +755,14 @@ best_summ_top_5cl <-
     left_join(mets_sub) %>% 
     # Drop all the independent variables you didn't use in the SOM (copy from myData above); 
     # but KEEP the INFO vars
-    # select(-one_of(drop.vars)) %>% 
+    select(-one_of(drop.vars)) %>%
+    mutate(SOMversion = "5cl") %>% 
     # Arrange columns
-    select(site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())  
+    select(SOMversion, site, wyear, date, doy_wyear, cluster, q_mm, q_mm_cum, everything())
+  
+  # Combine all into on df
+  datWithCluster <-
+    bind_rows(datWithCluster_3cl, datWithCluster_4cl, datWithCluster_5cl)
   
   # Write to CSV
   # datWithCluster %>% 
@@ -700,13 +790,13 @@ best_summ_top_5cl <-
                   legend.text = element_text(size = 9))
 ```
 
-##### 3 clusters - examine boxplots of independent variables by cluster
+#### 3 clusters - boxplots of independent variables by cluster
 ```{r boxplots 3cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
 # BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
   datWithCluster_3cl %>%
     # Remove the drop.info vars from above
     select(-one_of(drop.info)) %>% 
-    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
     ggplot(aes(x = cluster, y = value, group = cluster)) +
     facet_wrap(~var, scales = "free_y", ncol = 4) +
     geom_boxplot(fill = "white") +
@@ -728,9 +818,9 @@ datWithCluster_3cl %>%
   # Rename clusters
   mutate(cluster = paste("Cluster", cluster, sep = " ")) %>% 
   # Calculate z-scores for each independent variable
-  mutate_at(vars(c(snow_dep_m:ncol(.))),
+  mutate_at(vars(c(precip_mm:pyra_wattm2_dailyTot)),
           .funs = list(~ (. - mean(., na.rm = T)) / sd(., na.rm = T))) %>%
-  pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+  pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
   group_by(cluster, var) %>% 
   summarize(median = median(value, na.rm = T),
             q2 = quantile(value, 1/4, na.rm = T),
@@ -742,6 +832,7 @@ datWithCluster_3cl %>%
   ggplot(aes(x = var, y = median)) +
     # Must use scales = "free" when using the reordering functions
     facet_wrap(~cluster, ncol = 2) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
     geom_bar(stat = "identity") +
     geom_errorbar(aes(ymin = q2, ymax = q3), width = 0.2, position = position_dodge(0.9)) +
     # scale_x_reordered() +
@@ -754,7 +845,7 @@ datWithCluster_3cl %>%
 ```
 <br><br>
 
-#### 3 clusters - examine how the clusters map on to the cumulative runoff curves
+#### 3 clusters - here's how the clusters map on to the cumulative runoff curves
 ```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
 datWithCluster_3cl %>% 
   mutate(cluster = factor(cluster)) %>% 
@@ -766,20 +857,22 @@ datWithCluster_3cl %>%
   geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
   ylab("Runoff (mm)") +
   scale_x_date(date_breaks = "1 month", date_labels = "%b") +
-  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
-  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  scale_color_manual(values = c("#56B4E9", "#009E73", "#0072B2")) +
+  scale_fill_manual(values = c("#56B4E9", "#009E73", "#0072B2")) +
+  # scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  # scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
   theme1 +
   theme(axis.title.x = element_blank())
 ```
 <br><br>
 
-##### 4 clusters - examine boxplots of independent variables by cluster
+#### 4 clusters - boxplots of independent variables by cluster
 ```{r boxplots 4cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
 # BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
   datWithCluster_4cl %>%
     # Remove the drop.info vars from above
     select(-one_of(drop.info)) %>% 
-    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
     ggplot(aes(x = cluster, y = value, group = cluster)) +
     facet_wrap(~var, scales = "free_y", ncol = 4) +
     geom_boxplot(fill = "white") +
@@ -801,9 +894,9 @@ datWithCluster_4cl %>%
   # Rename clusters
   mutate(cluster = paste("Cluster", cluster, sep = " ")) %>% 
   # Calculate z-scores for each independent variable
-  mutate_at(vars(c(snow_dep_m:ncol(.))),
+  mutate_at(vars(c(precip_mm:pyra_wattm2_dailyTot)),
           .funs = list(~ (. - mean(., na.rm = T)) / sd(., na.rm = T))) %>%
-  pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+  pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
   group_by(cluster, var) %>% 
   summarize(median = median(value, na.rm = T),
             q2 = quantile(value, 1/4, na.rm = T),
@@ -815,6 +908,7 @@ datWithCluster_4cl %>%
   ggplot(aes(x = var, y = median)) +
     # Must use scales = "free" when using the reordering functions
     facet_wrap(~cluster, ncol = 2) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
     geom_bar(stat = "identity") +
     geom_errorbar(aes(ymin = q2, ymax = q3), width = 0.2, position = position_dodge(0.9)) +
     # scale_x_reordered() +
@@ -827,7 +921,7 @@ datWithCluster_4cl %>%
 ```
 <br><br>
 
-#### 4 clusters - examine how the clusters map on to the cumulative runoff curves
+#### 4 clusters - here's how the clusters map on to the cumulative runoff curves
 ```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
 datWithCluster_4cl %>% 
   mutate(cluster = factor(cluster)) %>% 
@@ -839,20 +933,483 @@ datWithCluster_4cl %>%
   geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
   ylab("Runoff (mm)") +
   scale_x_date(date_breaks = "1 month", date_labels = "%b") +
-  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
-  scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +  
+  scale_color_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +  
+  # scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  # scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +  
+  theme1 +
+  theme(axis.title.x = element_blank())
+
+# Snow depth curves
+# mets %>%
+#   filter(doy_wyear >= 145 & doy_wyear <= 245) %>%
+#   filter(site == "WB") %>%
+#   ggplot(aes(x = date, y = snow_dep_m)) +
+#   facet_wrap(~wyear, scales = "free_x", ncol = 4) +
+#   geom_path() +
+#   scale_x_date(date_breaks = "1 month", date_labels = "%b")
+```
+<br><br>
+
+#### 4 clusters - here's how the window of analysis maps onto the entire cumulative runoff curves
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
+mets %>% 
+  select(-one_of(drop.vars)) %>%
+  full_join(datWithCluster_4cl) %>% 
+  arrange(site, date) %>% 
+  mutate(cluster = factor(cluster)) %>% 
+  filter(!wyear %in% c(1999, 2000)) %>% 
+  filter(!is.na(site)) %>% 
+  ggplot(aes(x = doy_wyear)) +
+  facet_wrap(~wyear, ncol = 4) +
+  geom_rect(aes(xmin = doy_wyear, xmax = doy_wyear,
+                ymin = -Inf, ymax = Inf,
+            color = cluster, fill = cluster)) +
+  geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
+  ylab("Runoff (mm)") +
+  # scale_x_date(date_breaks = "2 month", date_labels = "%b") +
+  scale_color_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +  
+  # scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  # scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) + 
+  theme1 +
+  theme(axis.title.x = element_blank())  
+```
+<br><br>
+
+#### 4 clusters - exploratory data analysis with SOM results
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+# Summarize # and % of clusters for each analysis window
+# Number of observations for each water year (only need it for 1 site)
+n_obs <-
+  datWithCluster %>% 
+  filter(site == "WB") %>% 
+  count(SOMversion, wyear) %>% 
+  rename(total_obs = n)
+
+# Number of observations in each cluster
+# For the entire window of analysis
+n_cl_all <-
+  datWithCluster %>% 
+  filter(site == "WB") %>% 
+  mutate(cluster = factor(cluster)) %>% 
+  count(SOMversion, wyear, cluster) %>% 
+  rename(n_cl_all = n)
+
+clSumm <-
+  full_join(n_cl_all, n_obs) %>% 
+  # Calculate what proportion of the total obs is each cluster type 
+  mutate(n_cl_all_prop = n_cl_all/total_obs) %>% 
+  # Join the yield difference calcs
+  full_join(yields_comp) %>% 
+  select(-c(ends_with("end")))
+```
+
+##### Does the distribution of clusters across the spring window of analysis explain spring runoff differences?
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+# Stacked bar graphs
+# df for the stacked bar graphs
+clSumm3_4cl <-
+  clSumm %>% 
+  filter(SOMversion == "4cl") %>% 
+  mutate(clContr_abs = n_cl_all_prop * WBminusRB_abs_spr,
+         clContr_per = n_cl_all_prop * WBminusRB_per_spr)
+  
+clSumm3_4cl %>% 
+  mutate(cluster = factor(cluster, levels = c("4", "3", "2", "1"), exclude = "5")) %>% 
+  ggplot(aes(x = reorder(wyear, -WBminusRB_abs_spr), y = clContr_abs, fill = cluster)) +
+  geom_bar(position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("#0072B2", "#E69F00", "#009E73", "#56B4E9")) +
+  # scale_fill_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2")) +
+  xlab("Water year") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90))
+
+clSumm3_4cl %>% 
+  mutate(cluster = factor(cluster, levels = c("4", "3", "2", "1"), exclude = "5")) %>% 
+  ggplot(aes(x = reorder(wyear, -WBminusRB_abs_spr), y = n_cl_all_prop*100, fill = cluster)) +
+  geom_bar(position = "stack", stat = "identity") +
+  xlab("Water year") +
+  ylab("Runoff difference in spring (%; WB - RB)") +
+  scale_fill_manual(values = c("#0072B2", "#E69F00", "#009E73", "#56B4E9")) +
+  # scale_fill_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2")) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+<br><br>
+
+##### Does the number of warm days with greater than average precip explain the spring runoff difference?
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+# Is there a relationship between the # of the precip+ clusters and the yield diff?
+clSumm2_4cl <-
+  clSumm %>% 
+  filter(SOMversion == "4cl") %>% 
+  pivot_wider(names_from = cluster, values_from = c(n_cl_all, n_cl_all_prop)) %>% 
+  mutate_all(~ replace_na(., 0)) %>% 
+  mutate(n_cl_all_3and4 = n_cl_all_3 + n_cl_all_4,
+         n_cl_all_prop_3and4 = n_cl_all_prop_3 + n_cl_all_prop_4)
+
+# Predicting absolute diff.
+clSumm2_4cl %>% 
+  ggplot(aes(x = n_cl_all_4, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("No. of days as cluster 4") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +
+  theme_classic()
+
+lm1 <- lm(WBminusRB_abs_spr ~ n_cl_all_4, data = clSumm2_4cl)
+r2_lm1 <- round(summary(lm1)$adj.r.squared, 2)
+p_lm1 <- round(summary(lm1)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm1))
+noquote(paste0("p = ", p_lm1))
+
+# Predicting percent diff.
+clSumm2_4cl %>% 
+  ggplot(aes(x = n_cl_all_4, y = WBminusRB_per_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("No. of days as cluster 4") +
+  ylab("Runoff difference in spring (%; WB - RB)") +
+  theme_classic()
+
+lm2 <- lm(WBminusRB_per_spr ~ n_cl_all_4, data = clSumm2_4cl)
+r2_lm2 <- round(summary(lm2)$adj.r.squared, 2)
+p_lm2 <- round(summary(lm2)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm2))
+noquote(paste0("p = ", p_lm2))
+
+clSumm2_4cl %>% 
+  ggplot(aes(x = n_cl_all_3and4, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("No. of days as clusters 3 + 4") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +  
+  theme_classic()
+
+lm3 <- lm(WBminusRB_abs_spr ~ n_cl_all_3and4, data = clSumm2_4cl)
+r2_lm3 <- round(summary(lm3)$adj.r.squared, 2)
+p_lm3 <- round(summary(lm3)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm3))
+noquote(paste0("p = ", p_lm3))
+```
+<br><br>
+
+##### The runoff diff ~ number of days as cluster 4 is promising, but not perfect; what about total precip during this period?
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+sub_precip <-
+  datWithCluster %>% 
+  filter(site == "WB") %>% 
+  filter(SOMversion == "4cl") %>% 
+  group_by(wyear) %>%
+  summarize(precip_mm_sub = sum(precip_mm)) %>%
+  full_join(yields_comp)
+
+sub_precip %>%
+  ggplot(aes(x = precip_mm_sub, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. during spring window (mm)") +
+  ylab("Runoff difference in spring (mm; WB - RB)") + 
+  theme_classic()
+
+lm4 <- lm(WBminusRB_abs_spr ~ precip_mm_sub, data = sub_precip)
+r2_lm4 <- round(summary(lm4)$adj.r.squared, 2)
+p_lm4 <- round(summary(lm4)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm4))
+noquote(paste0("p = ", p_lm4))
+```
+<br><br>
+
+##### For many years, the divergence occurs after switch from colder to warmer days (from cluster 1 to 2)  
+##### Does focusing on the warmer period yield any insight?  
+Here I use a running mode to identify when the switch occurs from predominantly cluster 1 to 2 or 4 (cold to warm transition)  
+Transition is plotted as the vertical black line  
+Note: the running mode (width = 3) worked well for all years but 2017; I shifted that one to first occurrence of cluster 2
+<br><br>
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1, out.width = "90%"}
+# Let's try identifying where the cluster time series switches from predominantly cold to warm
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+mode_4cl <- 
+  datWithCluster %>% 
+  filter(SOMversion == "4cl") %>% 
+  filter(site == "WB") %>% 
+  group_by(wyear) %>% 
+  mutate(cluster_mode = rollapply(data = cluster,
+                                  width = 3,
+                                  FUN = Mode,
+                                  align = "center",
+                                  fill = NA))
+
+mode_4cl_first <-
+  mode_4cl %>%
+  # Slice from the first occurrence of 2 as the cluster mode to the end of the time series
+  group_by(wyear) %>%
+  slice(ifelse(wyear == 2017, min(which(cluster %in% c(2, 4))), min(which(cluster_mode %in% c(2, 4))))) %>%
+  select(wyear, date)
+
+
+datWithCluster_4cl %>%
+  mutate(cluster = factor(cluster)) %>%
+  ggplot(aes(x = date)) +
+  facet_wrap(~wyear, ncol = 4, scales = "free_x") +
+  geom_rect(aes(xmin = date, xmax = date,
+                ymin = -Inf, ymax = Inf,
+            color = cluster, fill = cluster)) +
+  geom_vline(data = mode_4cl_first, aes(xintercept = date), size = 0.9) +
+  geom_path(aes(y = q_mm_cum, group = site, linetype = site)) +
+  ylab("Runoff (mm)") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  # scale_x_date(date_breaks = "2 month", date_labels = "%b") +
+  scale_color_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +
+  scale_fill_manual(values = c("#56B4E9", "#009E73", "#E69F00", "#0072B2", "#CC79A7")) +  
+  # scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) +
+  # scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#CC79A7")) + 
   theme1 +
   theme(axis.title.x = element_blank())
 ```
 <br><br>
 
-##### 5 clusters - examine boxplots of independent variables by cluster
+```{r, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+warm_4cl <-
+  mode_4cl %>%
+  group_by(wyear) %>%
+  slice(ifelse(wyear == 2017, min(which(cluster %in% c(2, 4))), min(which(cluster_mode %in% c(2, 4)))):nrow(.)) %>% 
+  mutate(period = "warm")
+
+cold_4cl <-
+  mode_4cl %>%
+  group_by(wyear) %>%
+  slice(1:ifelse(wyear == 2017, min(which(cluster %in% c(2, 4))), min(which(cluster_mode %in% c(2, 4))))) %>% 
+  mutate(period = "cold")
+
+mode_all <-
+  bind_rows(cold_4cl, warm_4cl) %>% 
+  filter(site == "WB") %>% 
+  count(wyear, period) %>% 
+  rename(total_obs_n = n) %>% 
+  pivot_wider(names_from = period, values_from = total_obs_n) %>% 
+  mutate(prop_warm2cold = warm/cold) %>% 
+  full_join(yields_comp)
+
+mode_all %>%
+  filter(wyear != 2012) %>% 
+  ggplot(aes(x = prop_warm2cold, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Prop. of days in cold to warm period for whole spring window") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +   
+  theme_classic() +
+  ggtitle("end of spring - excludes 2012")
+
+lm5 <- lm(WBminusRB_abs_spr ~ prop_warm2cold, data = mode_all)
+r2_lm5 <- round(summary(lm5)$adj.r.squared, 2)
+p_lm5 <- round(summary(lm5)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm5))
+noquote(paste0("p = ", p_lm5))
+
+mode_all %>%
+  filter(wyear != 2012) %>% 
+  ggplot(aes(x = prop_warm2cold, y = WBminusRB_abs_end)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Prop. of days in cold to warm period for whole spring window") +
+  ylab("Runoff difference at year end (mm; WB - RB)") +   
+  theme_classic() +
+  ggtitle("end of year - excludes 2012")
+
+lm6 <- lm(WBminusRB_abs_end ~ prop_warm2cold, data = mode_all)
+r2_lm6 <- round(summary(lm6)$adj.r.squared, 2)
+p_lm6 <- round(summary(lm6)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm6))
+noquote(paste0("p = ", p_lm6))
+
+# Number of days in warm period
+n_obs_warm <-
+  warm_4cl %>%
+  filter(site == "WB") %>%
+  count(wyear) %>%
+  rename(total_obs = n)
+
+# Number of observations in each cluster
+# For the warm period
+n_cl_warm <-
+  warm_4cl %>%
+  filter(site == "WB") %>%
+  mutate(cluster = factor(cluster)) %>%
+  count(wyear, cluster) %>%
+  rename(n_cl_warm = n)
+
+clSumm_warm_4cl <-
+  full_join(n_cl_warm, n_obs_warm) %>%
+  # Calculate what proportion of the total obs is each cluster type
+  mutate(n_cl_warm_prop = n_cl_warm/total_obs) %>%
+  # Join the yield difference calcs
+  full_join(yields_comp)
+
+clSumm2_warm_4cl <-
+  clSumm_warm_4cl %>%
+  pivot_wider(names_from = cluster, values_from = c(n_cl_warm, n_cl_warm_prop)) %>%
+  mutate_all(~ replace_na(., 0)) %>%
+  mutate(prop_cold2warm = n_cl_warm_1/(n_cl_warm_2 + n_cl_warm_4))
+
+clSumm2_warm_4cl %>%
+  ggplot(aes(x = n_cl_warm_4, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("No. of days as cluster 4") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +  
+  theme_classic() +
+  ggtitle("end of spring")
+
+lm7 <- lm(WBminusRB_abs_spr ~ n_cl_warm_4, data = clSumm2_warm_4cl)
+r2_lm7 <- round(summary(lm7)$adj.r.squared, 2)
+p_lm7 <- round(summary(lm7)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm7))
+noquote(paste0("p = ", p_lm7))
+
+clSumm2_warm_4cl %>%
+  ggplot(aes(x = n_cl_warm_4, y = WBminusRB_abs_end)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("No. of days as cluster 4") +
+  ylab("Runoff difference at year end (mm; WB - RB)") +  
+  theme_classic() +
+  ggtitle("end of year")
+
+lm8 <- lm(WBminusRB_abs_end ~ n_cl_warm_4, data = clSumm2_warm_4cl)
+r2_lm8 <- round(summary(lm8)$adj.r.squared, 2)
+p_lm8 <- round(summary(lm8)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm8))
+noquote(paste0("p = ", p_lm8))
+
+warm_precip <-
+  warm_4cl %>%
+  group_by(wyear) %>%
+  summarize(precip_mm_warm = sum(precip_mm)) %>%
+  full_join(yields_comp) %>%
+  full_join(clSumm2_warm_4cl)
+
+warm_precip %>%
+  ggplot(aes(x = precip_mm_warm, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. during warmer period (mm)") +
+  ylab("Runoff difference in spring (mm; WB - RB)") + 
+  theme_classic() +
+  ggtitle("end of spring")
+
+lm9 <- lm(WBminusRB_abs_spr ~ precip_mm_warm, data = warm_precip)
+r2_lm9 <- round(summary(lm9)$adj.r.squared, 2)
+p_lm9 <- round(summary(lm9)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm9))
+noquote(paste0("p = ", p_lm9))
+
+warm_precip %>%
+  ggplot(aes(x = precip_mm_warm, y = WBminusRB_abs_end)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. during warmer period (mm)") +
+  ylab("Runoff difference at year end (mm; WB - RB)") + 
+  theme_classic() +
+  ggtitle("end of year")
+
+lm10 <- lm(WBminusRB_abs_end ~ precip_mm_warm, data = warm_precip)
+r2_lm10 <- round(summary(lm10)$adj.r.squared, 2)
+p_lm10 <- round(summary(lm10)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm10))
+noquote(paste0("p = ", p_lm10))
+
+lastcold <-
+  datWithCluster %>%
+  filter(SOMversion == "4cl") %>%
+  filter(site == "WB") %>%
+  group_by(wyear) %>%
+  # Slice after the last occurrence of 1 as the cluster mode to the end of the time series
+  group_by(wyear) %>%
+  slice(max(which(cluster == 1)):nrow(.))
+
+lastcold_precip <-
+  lastcold %>%
+  group_by(wyear) %>%
+  summarize(precip_mm_lastcold = sum(precip_mm)) %>%
+  full_join(yields_comp)
+
+lastcold_precip %>%
+  ggplot(aes(x = precip_mm_lastcold, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. after last cold day (cluster 2) (mm)") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +   
+  theme_classic() +
+  ggtitle("end of spring")
+
+lm11 <- lm(WBminusRB_abs_spr ~ precip_mm_lastcold, data = lastcold_precip)
+r2_lm11 <- round(summary(lm11)$adj.r.squared, 2)
+p_lm11 <- round(summary(lm11)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm11))
+noquote(paste0("p = ", p_lm11))
+
+lastcold_precip %>%
+  filter(wyear != 2012) %>% 
+  ggplot(aes(x = precip_mm_lastcold, y = WBminusRB_abs_spr)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. after last cold day (cluster 2) (mm)") +
+  ylab("Runoff difference in spring (mm; WB - RB)") +   
+  theme_classic() +
+  ggtitle("end of spring - same as above, but excludes 2012")
+
+lm12 <- lm(WBminusRB_abs_spr ~ precip_mm_lastcold, data = lastcold_precip %>% filter(wyear != 2012))
+r2_lm12 <- round(summary(lm12)$adj.r.squared, 2)
+p_lm12 <- round(summary(lm12)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm12))
+noquote(paste0("p = ", p_lm12))
+
+lastcold_precip %>%
+  ggplot(aes(x = precip_mm_lastcold, y = WBminusRB_abs_end)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = wyear), hjust = -0.25, vjust = 0, size = 2) +
+  xlab("Total precip. after last cold day (cluster 2) (mm)") +
+  ylab("Runoff difference at year end (mm; WB - RB)") +   
+  theme_classic() +
+  ggtitle("end of year")
+
+lm13 <- lm(WBminusRB_abs_end ~ precip_mm_lastcold, data = lastcold_precip)
+r2_lm13 <- round(summary(lm13)$adj.r.squared, 2)
+p_lm13 <- round(summary(lm13)$coefficients[2,4], 3)
+noquote(paste0("R2 = ", r2_lm13))
+noquote(paste0("p = ", p_lm13))
+
+# Is there a relationship b/w date of divergence of q_mm_cum (> some threshold) & yield diff?
+```
+<br><br>
+
+#### 5 clusters - examine boxplots of independent variables by cluster
 ```{r boxplots 5cl, include = TRUE, echo = FALSE, message = FALSE, warning = FALSE, fig.asp = 1.4}
 # BOXPLOTS OF INDEPENDENT VARIABLES BY CLUSTER ----
   datWithCluster_5cl %>%
     # Remove the drop.info vars from above
     select(-one_of(drop.info)) %>% 
-    pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+    pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
     ggplot(aes(x = cluster, y = value, group = cluster)) +
     facet_wrap(~var, scales = "free_y", ncol = 4) +
     geom_boxplot(fill = "white") +
@@ -874,9 +1431,9 @@ datWithCluster_5cl %>%
   # Rename clusters
   mutate(cluster = paste("Cluster", cluster, sep = " ")) %>% 
   # Calculate z-scores for each independent variable
-  mutate_at(vars(c(snow_dep_m:ncol(.))),
+  mutate_at(vars(c(precip_mm:pyra_wattm2_dailyTot)),
           .funs = list(~ (. - mean(., na.rm = T)) / sd(., na.rm = T))) %>%
-  pivot_longer(cols = snow_dep_m:ncol(.), names_to = "var", values_to = "value") %>% 
+  pivot_longer(cols = precip_mm:pyra_wattm2_dailyTot, names_to = "var", values_to = "value") %>% 
   group_by(cluster, var) %>% 
   summarize(median = median(value, na.rm = T),
             q2 = quantile(value, 1/4, na.rm = T),
@@ -888,6 +1445,7 @@ datWithCluster_5cl %>%
   ggplot(aes(x = var, y = median)) +
     # Must use scales = "free" when using the reordering functions
     facet_wrap(~cluster, ncol = 2) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
     geom_bar(stat = "identity") +
     geom_errorbar(aes(ymin = q2, ymax = q3), width = 0.2, position = position_dodge(0.9)) +
     # scale_x_reordered() +
